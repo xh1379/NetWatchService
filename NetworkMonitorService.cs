@@ -26,10 +26,6 @@ namespace NetWatchService
         private int adapterResetRetries;
         private int adapterResetDelayMs;
 
-        // Track persistent media disconnect scenario
-        private int consecutiveMediaDisconnects = 0;
-        private const int MediaDisconnectThreshold = 5;
-
         private enum NetworkHealthState
         {
             Healthy,
@@ -233,7 +229,6 @@ namespace NetWatchService
                 if (health.State == NetworkHealthState.Healthy)
                 {
                     consecutiveFailures = 0;
-                    consecutiveMediaDisconnects = 0;
                     WriteLog("网络硬件状态正常");
 
                     if (autoStopOnNetworkOk)
@@ -254,30 +249,15 @@ namespace NetWatchService
                     if (health.State == NetworkHealthState.PendingRecovery)
                     {
                         WriteLog("网卡正在尝试恢复，等待下一轮检查");
-                        consecutiveMediaDisconnects = 0;
-                    }
-                    else if (health.State == NetworkHealthState.MediaDisconnected)
-                    {
-                        consecutiveMediaDisconnects++;
-                        WriteLog(string.Format("检测到介质断开或外部网络问题 (连续: {0}/{1})", consecutiveMediaDisconnects, MediaDisconnectThreshold));
-
-                        if (consecutiveMediaDisconnects >= MediaDisconnectThreshold)
-                        {
-                            WriteLog("介质持续断开且无法恢复，判定为硬件或链路故障，准备重启...");
-                            RestartComputer();
-                            return;
-                        }
                     }
                     else
                     {
                         WriteLog(string.Format("检测到可恢复或外部原因导致的问题: {0}", health.Message));
-                        consecutiveMediaDisconnects = 0;
                     }
                     return;
                 }
 
                 consecutiveFailures++;
-                consecutiveMediaDisconnects = 0;
                 WriteLog(string.Format("检测到硬件级异常 ({0})，连续失败 {1}/{2}", health.Message, consecutiveFailures, failureThreshold));
 
                 if (consecutiveFailures >= failureThreshold || checkCount >= maxCheckCount)
@@ -347,8 +327,6 @@ namespace NetWatchService
                 {
                     WriteLog("所有网卡均显示介质断开，可能是网线或上游设备断电");
 
-                    // 在断电恢复场景下，网卡可能在短时间内仍报告介质断开。尝试进行一次重置并等待下一轮检查，
-                    // 而不是立即将其计为严重故障或触发重启。
                     if (enableAdapterReset)
                     {
                         WriteLog("尝试重置适配器以恢复连接...");
@@ -360,12 +338,12 @@ namespace NetWatchService
                         }
                         else
                         {
-                            WriteLog("重置未能恢复连接，短暂等待下一次检查");
-                            return NetworkHealthResult.NonCritical(NetworkHealthState.MediaDisconnected, "介质断开，重置未恢复");
+                            WriteLog("重置未能恢复连接，多次失败后将升级处理");
+                            return NetworkHealthResult.Critical(NetworkHealthState.MediaDisconnected, "介质断开，多次重置失败");
                         }
                     }
 
-                    return NetworkHealthResult.NonCritical(NetworkHealthState.MediaDisconnected, "介质断开");
+                    return NetworkHealthResult.Critical(NetworkHealthState.MediaDisconnected, "介质断开且未启用重置");
                 }
 
                 WriteLog("发现物理网卡但没有处于 Up 状态，尝试恢复");
