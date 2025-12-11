@@ -26,6 +26,10 @@ namespace NetWatchService
         private int adapterResetRetries;
         private int adapterResetDelayMs;
 
+        // Track persistent media disconnect scenario
+        private int consecutiveMediaDisconnects = 0;
+        private const int MediaDisconnectThreshold = 5;
+
         private enum NetworkHealthState
         {
             Healthy,
@@ -229,6 +233,7 @@ namespace NetWatchService
                 if (health.State == NetworkHealthState.Healthy)
                 {
                     consecutiveFailures = 0;
+                    consecutiveMediaDisconnects = 0;
                     WriteLog("网络硬件状态正常");
 
                     if (autoStopOnNetworkOk)
@@ -249,15 +254,30 @@ namespace NetWatchService
                     if (health.State == NetworkHealthState.PendingRecovery)
                     {
                         WriteLog("网卡正在尝试恢复，等待下一轮检查");
+                        consecutiveMediaDisconnects = 0;
+                    }
+                    else if (health.State == NetworkHealthState.MediaDisconnected)
+                    {
+                        consecutiveMediaDisconnects++;
+                        WriteLog(string.Format("检测到介质断开或外部网络问题 (连续: {0}/{1})", consecutiveMediaDisconnects, MediaDisconnectThreshold));
+
+                        if (consecutiveMediaDisconnects >= MediaDisconnectThreshold)
+                        {
+                            WriteLog("介质持续断开且无法恢复，判定为硬件或链路故障，准备重启...");
+                            RestartComputer();
+                            return;
+                        }
                     }
                     else
                     {
                         WriteLog(string.Format("检测到可恢复或外部原因导致的问题: {0}", health.Message));
+                        consecutiveMediaDisconnects = 0;
                     }
                     return;
                 }
 
                 consecutiveFailures++;
+                consecutiveMediaDisconnects = 0;
                 WriteLog(string.Format("检测到硬件级异常 ({0})，连续失败 {1}/{2}", health.Message, consecutiveFailures, failureThreshold));
 
                 if (consecutiveFailures >= failureThreshold || checkCount >= maxCheckCount)
