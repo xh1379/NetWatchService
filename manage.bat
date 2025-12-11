@@ -157,10 +157,11 @@ if exist "%CONFIG_PATH%" (
             echo # NetWatchService ÅäÖÃÎÄ¼þ
             echo LogPath=%%ProgramData%%\NetWatchService\log.txt
             echo IntervalMs=60000
-            echo PingTimeoutMs=3000
             echo MaxCheckCount=10
             echo FailureThreshold=3
-            echo PingTargets=8.8.8.8,114.114.114.114
+            echo EnableAdapterReset=true
+            echo AdapterResetRetries=3
+            echo AdapterResetDelayMs=5000
             echo TestMode=false
             echo AutoStopOnNetworkOk=true
         ) > "%CONFIG_PATH%"
