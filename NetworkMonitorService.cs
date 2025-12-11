@@ -20,6 +20,7 @@ namespace NetWatchService
         private int intervalMs;
         private bool testMode;
         private bool autoStopOnNetworkOk;
+        private volatile bool isChecking = false;
 
         // New settings for hardware-level handling
         private bool enableAdapterReset;
@@ -192,6 +193,9 @@ namespace NetWatchService
 
         protected override void OnStart(string[] args)
         {
+            checkCount = 0;
+            consecutiveFailures = 0;
+
             try
             {
                 string dir = Path.GetDirectoryName(logPath);
@@ -208,75 +212,88 @@ namespace NetWatchService
 
             WriteLog("Service started - 开始检查网络状态");
 
-            timer = new Timer(intervalMs); // configurable interval
+            timer = new Timer(intervalMs);
             timer.Elapsed += Timer_Elapsed;
             timer.AutoReset = true;
             timer.Start();
 
-            // 启动后立即执行第一次检查
             Timer_Elapsed(null, null);
         }
 
         private void Timer_Elapsed(object sender, ElapsedEventArgs e)
         {
-            checkCount++;
-            WriteLog(string.Format("第 {0} 次检查网络...", checkCount));
+            if (isChecking)
+            {
+                WriteLog("跳过检查: 上一次检查仍在进行中");
+                return;
+            }
 
+            isChecking = true;
             try
             {
-                NetworkHealthResult health = CheckNetwork();
+                checkCount++;
+                WriteLog(string.Format("第 {0} 次检查网络...", checkCount));
 
-                if (health.State == NetworkHealthState.Healthy)
+                try
                 {
-                    consecutiveFailures = 0;
-                    WriteLog("网络硬件状态正常");
+                    NetworkHealthResult health = CheckNetwork();
 
-                    if (autoStopOnNetworkOk)
+                    if (health.State == NetworkHealthState.Healthy)
                     {
-                        WriteLog("网络正常 - 服务即将停止");
-                        if (timer != null)
-                            timer.Stop();
-                        this.Stop();
+                        consecutiveFailures = 0;
+                        WriteLog("网络硬件状态正常");
+
+                        if (autoStopOnNetworkOk)
+                        {
+                            WriteLog("网络正常 - 服务即将停止");
+                            if (timer != null)
+                                timer.Stop();
+                            this.Stop();
+                            return;
+                        }
+
                         return;
                     }
 
-                    return;
-                }
-
-                if (!health.ShouldEscalate)
-                {
-                    consecutiveFailures = 0;
-                    if (health.State == NetworkHealthState.PendingRecovery)
+                    if (!health.ShouldEscalate)
                     {
-                        WriteLog("网卡正在尝试恢复，等待下一轮检查");
+                        consecutiveFailures = 0;
+                        if (health.State == NetworkHealthState.PendingRecovery)
+                        {
+                            WriteLog("网卡正在尝试恢复，等待下一轮检查");
+                        }
+                        else
+                        {
+                            WriteLog(string.Format("检测到可恢复或外部原因导致的问题: {0}", health.Message));
+                        }
+                        return;
                     }
-                    else
+
+                    consecutiveFailures++;
+                    WriteLog(string.Format("检测到硬件级异常 ({0})，连续失败 {1}/{2}", health.Message, consecutiveFailures, failureThreshold));
+
+                    if (consecutiveFailures >= failureThreshold || checkCount >= maxCheckCount)
                     {
-                        WriteLog(string.Format("检测到可恢复或外部原因导致的问题: {0}", health.Message));
+                        WriteLog("硬件状态持续异常，准备重启计算机...");
+                        RestartComputer();
+                        return;
                     }
-                    return;
                 }
-
-                consecutiveFailures++;
-                WriteLog(string.Format("检测到硬件级异常 ({0})，连续失败 {1}/{2}", health.Message, consecutiveFailures, failureThreshold));
-
-                if (consecutiveFailures >= failureThreshold || checkCount >= maxCheckCount)
+                catch (Exception ex)
                 {
-                    WriteLog("硬件状态持续异常，准备重启计算机...");
-                    RestartComputer();
-                    return;
+                    WriteLog("检查过程出错: " + ex.Message);
+                    consecutiveFailures++;
+
+                    if (consecutiveFailures >= failureThreshold || checkCount >= maxCheckCount)
+                    {
+                        WriteLog("多次检查失败，准备重启计算机...");
+                        RestartComputer();
+                    }
                 }
             }
-            catch (Exception ex)
+            finally
             {
-                WriteLog("检查过程出错: " + ex.Message);
-                consecutiveFailures++;
-
-                if (consecutiveFailures >= failureThreshold || checkCount >= maxCheckCount)
-                {
-                    WriteLog("多次检查失败，准备重启计算机...");
-                    RestartComputer();
-                }
+                isChecking = false;
             }
         }
 
@@ -304,6 +321,11 @@ namespace NetWatchService
                 }
 
                 var snapshots = physicalAdapters.Select(a => new AdapterSnapshot(a)).ToList();
+                
+                foreach (var mo in physicalAdapters)
+                {
+                    mo.Dispose();
+                }
 
                 if (snapshots.Any(s => s.IndicatesHardwareFault))
                 {
@@ -412,35 +434,55 @@ namespace NetWatchService
                     WriteLog(string.Format("重置尝试 {0}/{1}", attempt + 1, retries));
 
                     var adapters = GetPhysicalAdapters();
-                    foreach (var mo in adapters)
+                    try
                     {
-                        try
+                        foreach (var mo in adapters)
                         {
-                            var netEnabled = mo["NetEnabled"];
-                            if (netEnabled == null || (bool)netEnabled == false)
+                            try
                             {
-                                WriteLog(string.Format("尝试启用适配器: {0}", mo["Name"]));
-                                try { mo.InvokeMethod("Enable", null); } catch { }
+                                var netEnabled = mo["NetEnabled"];
+                                if (netEnabled == null || (bool)netEnabled == false)
+                                {
+                                    WriteLog(string.Format("尝试启用适配器: {0}", mo["Name"]));
+                                    try { mo.InvokeMethod("Enable", null); } catch { }
+                                }
+                                else
+                                {
+                                    WriteLog(string.Format("尝试重启适配器: {0}", mo["Name"]));
+                                    try { mo.InvokeMethod("Disable", null); } catch { }
+                                    System.Threading.Thread.Sleep(500);
+                                    try { mo.InvokeMethod("Enable", null); } catch { }
+                                }
                             }
-                            else
+                            catch (Exception ex)
                             {
-                                WriteLog(string.Format("尝试重启适配器: {0}", mo["Name"]));
-                                try { mo.InvokeMethod("Disable", null); } catch { }
-                                System.Threading.Thread.Sleep(500);
-                                try { mo.InvokeMethod("Enable", null); } catch { }
+                                WriteLog("Reset adapter exception: " + ex.Message);
                             }
                         }
-                        catch (Exception ex)
+                    }
+                    finally
+                    {
+                        foreach (var mo in adapters)
                         {
-                            WriteLog("Reset adapter exception: " + ex.Message);
+                            mo.Dispose();
                         }
                     }
 
                     System.Threading.Thread.Sleep(delayMs);
 
-                    var adaptersUp = GetPhysicalAdapters().Where(a => IsAdapterOperational(a)).ToList();
-                    if (adaptersUp.Count > 0)
-                        return true;
+                    var adaptersUp = GetPhysicalAdapters();
+                    try
+                    {
+                        if (adaptersUp.Where(a => IsAdapterOperational(a)).Any())
+                            return true;
+                    }
+                    finally
+                    {
+                        foreach (var mo in adaptersUp)
+                        {
+                            mo.Dispose();
+                        }
+                    }
                 }
             }
             catch (Exception ex)

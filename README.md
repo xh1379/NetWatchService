@@ -1,246 +1,337 @@
-# NetWatchService 部署说明
+# NetWatchService
 
-## ?? 项目简介
+A Windows service that monitors network adapter hardware status and automatically restarts the system when network failures are detected.
 
-**NetWatchService** 是一个 Windows 系统服务，用于解决断电恢复后网卡无法正常工作的问题。
+## Features
 
-### 工作原理
-1. 系统启动后自动运行（无需登录）
-2. 每 60 秒检查一次网络状态
-3. **网络正常** → 自动停止服务
-4. **网络异常** → 连续失败 3 次后重启计算机
-5. 最多检查 10 次（10 分钟）
+- **Hardware-level network diagnostics** using WMI queries
+- **Intelligent failure classification**: Distinguishes hardware faults, media disconnects, and recoverable issues
+- **Automatic adapter reset**: Attempts to recover network adapters before escalating
+- **Configurable thresholds**: Customizable retry counts, intervals, and failure limits
+- **Safe power-recovery handling**: Gracefully handles post-reboot network initialization
+- **Detailed logging**: Tracks every check, reset attempt, and decision
 
 ---
 
-## ?? 一键部署
+## Quick Start
 
-### 方法一：使用自动部署脚本（推荐）
+### One-Click Installation (Recommended)
 
-1. **右键点击 `install.bat`，选择「以管理员身份运行」**
-2. 脚本会自动完成：
-   - ? 检查环境和权限
-   - ? 停止旧服务（如果存在）
-   - ? 编译项目（Release 模式）
-   - ? 复制文件到 `C:\NetWatchService\`
-   - ? 安装并启动服务
-3. 部署完成！
+1. **Right-click `install.bat` → Run as Administrator**
+2. The script will:
+   - ? Check environment and permissions
+   - ? Stop any existing service
+   - ? Build the project (Release mode)
+   - ? Copy files to `C:\NetWatchService\`
+   - ? Install and start the service
 
-### 方法二：手动部署
+### Manual Installation
 
 ```powershell
-# 1. 使用 Visual Studio 编译项目（Release 模式）
+# 1. Build the project in Visual Studio (Release mode)
 
-# 2. 以管理员身份打开 PowerShell
+# 2. Open PowerShell as Administrator
 
-# 3. 创建安装目录
+# 3. Create installation directory
 New-Item -Path "C:\NetWatchService" -ItemType Directory -Force
 
-# 4. 复制编译后的文件
+# 4. Copy binaries
 Copy-Item "bin\Release\NetWatchService.exe" "C:\NetWatchService\"
 
-# 5. 安装服务
-sc.exe create NetWatchService binPath= "C:\NetWatchService\NetWatchService.exe" start= auto DisplayName= "网络监控服务"
-sc.exe description NetWatchService "断电恢复后自动检查网络状态，异常时重启计算机"
+# 5. Install service
+sc.exe create NetWatchService binPath= "C:\NetWatchService\NetWatchService.exe" start= auto DisplayName= "Network Watch Service"
+sc.exe description NetWatchService "Monitors network hardware and restarts system on persistent failures"
 
-# 6. 设置失败恢复策略
+# 6. Configure failure recovery
 sc.exe failure NetWatchService reset= 86400 actions= restart/60000/restart/60000/restart/60000
 
-# 7. 启动服务
+# 7. Start service
 sc.exe start NetWatchService
 ```
 
 ---
 
-## ?? 文件说明
+## Configuration
 
-| 文件 | 说明 |
-|------|------|
-| `install.bat` | 一键安装部署脚本 |
-| `uninstall.bat` | 一键卸载脚本 |
-| `manage.bat` | 服务管理工具（启动/停止/查看日志等） |
-| `NetworkMonitorService.cs` | 核心服务代码 |
-| `Program.cs` | 服务入口 |
+### File Location
+- **Primary**: `%ProgramData%\NetWatchService\settings.ini`
+- **Fallback**: `C:\NetWatchService\settings.ini` (installation directory)
+
+### Settings Reference
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `LogPath` | `%ProgramData%\NetWatchService\log.txt` | Log file location (supports environment variables) |
+| `IntervalMs` | `60000` | Check interval in milliseconds (1 minute) |
+| `MaxCheckCount` | `10` | Maximum checks before forced restart |
+| `FailureThreshold` | `3` | Consecutive critical failures required to trigger restart |
+| `EnableAdapterReset` | `true` | Allow automatic adapter disable/enable attempts |
+| `AdapterResetRetries` | `3` | Number of reset attempts per check cycle |
+| `AdapterResetDelayMs` | `5000` | Wait time after each reset attempt (5 seconds) |
+| `TestMode` | `false` | Simulate restart without executing `shutdown` command |
+| `AutoStopOnNetworkOk` | `true` | Stop service when network becomes healthy |
+
+### Example Configuration
+
+```ini
+# NetWatchService settings
+LogPath=%ProgramData%\NetWatchService\log.txt
+IntervalMs=30000
+MaxCheckCount=10
+FailureThreshold=3
+EnableAdapterReset=true
+AdapterResetRetries=3
+AdapterResetDelayMs=5000
+TestMode=false
+AutoStopOnNetworkOk=true
+```
 
 ---
 
-## ??? 服务管理
+## Management
 
-### 使用管理脚本（推荐）
+### Using Manage Script (Recommended)
 
-**右键点击 `manage.bat`，选择「以管理员身份运行」**
+**Right-click `manage.bat` → Run as Administrator**
 
-提供以下功能：
-- ?? 启动/停止/重启服务
-- ?? 查看服务状态
-- ?? 查看日志（最后 20 行或完整日志）
-- ??? 清空日志
-- ?? 测试网络连接
+Available options:
+- ?? Start/Stop/Restart service
+- ?? View service status
+- ?? View recent logs (last 20 lines)
+- ?? Open full log in Notepad
+- ?? Clear logs
+- ?? Edit configuration
 
-### 使用 Windows 命令
+### Using Windows Commands
 
 ```powershell
-# 查看服务状态
+# View status
 sc query NetWatchService
 
-# 启动服务
+# Start service
 sc start NetWatchService
 
-# 停止服务
+# Stop service
 sc stop NetWatchService
 
-# 查看日志
-type C:\NetWatchService\log.txt
+# View logs
+type %ProgramData%\NetWatchService\log.txt
 
-# 查看最后 20 行日志
-powershell "Get-Content C:\NetWatchService\log.txt -Tail 20"
+# View recent logs
+powershell "Get-Content '%ProgramData%\NetWatchService\log.txt' -Tail 20"
 ```
 
-### 使用 Windows 服务管理器
+### Using Services.msc
 
-1. 按 `Win + R`，输入 `services.msc`
-2. 找到「网络监控服务」或「NetWatchService」
-3. 右键 → 启动/停止/属性
+1. Press `Win + R`, type `services.msc`
+2. Find "Network Watch Service" or "NetWatchService"
+3. Right-click → Start/Stop/Restart
 
 ---
 
-## ?? 日志查看
+## How It Works
 
-### 日志位置
+### Health Check Flow
+
+1. **Query Physical Adapters**: Uses WMI to enumerate all physical network adapters
+2. **Classify Status**:
+   - ? **Healthy**: Adapter operational with valid IP configuration
+   - ?? **Non-Critical**: Missing IP (DHCP issue), media disconnected (cable/switch)
+   - ?? **Critical**: Hardware fault, driver error, adapter disabled and unrecoverable
+   - ?? **Pending**: Reset in progress, awaiting next check
+3. **Attempt Recovery**: For recoverable issues, tries to reset adapter (disable/enable)
+4. **Escalate**: After consecutive critical failures exceed threshold, triggers system restart
+
+### Decision Logic
+
 ```
-C:\NetWatchService\log.txt
+Network Check
+│
+├─ No Adapters Found → Try Reset → Still None → CRITICAL
+├─ Hardware Fault (Status 4/5/6) → CRITICAL
+├─ At Least One Operational
+│  ├─ Has IP → HEALTHY
+│  └─ No IP → NON-CRITICAL (DHCP/network issue)
+├─ All Media Disconnected (Status 7)
+│  ├─ Try Reset → Success → PENDING
+│  └─ Fail → CRITICAL
+└─ Adapters Present but Not Up
+   ├─ Try Reset → Success → PENDING
+   └─ Fail → CRITICAL
 ```
 
-### 日志示例
+### Restart Trigger Conditions
+
+System restart occurs when **ANY** of:
+- Consecutive critical failures ≥ `FailureThreshold` (default: 3)
+- Total checks ≥ `MaxCheckCount` (default: 10)
+- Exception during check exceeds threshold
+
+---
+
+## Log Reference
+
+### Log Location
 ```
-2024-01-15 08:30:01 - Service started - 开始检查网络状态
-2024-01-15 08:30:01 - 第 1 次检查网络...
-2024-01-15 08:30:01 - 网络异常 (连续失败: 1/3)
-2024-01-15 08:31:01 - 第 2 次检查网络...
-2024-01-15 08:31:02 - Ping 8.8.8.8 成功 - 延迟: 45ms
-2024-01-15 08:31:02 - 网络正常 - 服务即将停止
-2024-01-15 08:31:02 - Service stopped
+%ProgramData%\NetWatchService\log.txt
+```
+(Typically: `C:\ProgramData\NetWatchService\log.txt`)
+
+### Sample Log
+
+```
+2025-12-11 14:18:32 - Service started - 开始检查网络状态
+2025-12-11 14:18:32 - 第 1 次检查网络...
+2025-12-11 14:18:32 - 所有网卡均显示介质断开，可能是网线或上游设备断电
+2025-12-11 14:18:32 - 尝试重置适配器以恢复连接...
+2025-12-11 14:18:32 - 重置尝试 1/3
+2025-12-11 14:18:33 - 尝试启用适配器: Intel(R) Ethernet Connection (7) I219-V
+2025-12-11 14:18:38 - 重置尝试 2/3
+2025-12-11 14:18:43 - 重置尝试 3/3
+2025-12-11 14:18:48 - 重置未能恢复连接，多次失败后将升级处理
+2025-12-11 14:18:48 - 检测到硬件级异常 (介质断开，多次重置失败)，连续失败 1/3
+2025-12-11 14:19:18 - 第 2 次检查网络...
+2025-12-11 14:19:18 - 检测到硬件级异常 (介质断开，多次重置失败)，连续失败 2/3
+2025-12-11 14:19:48 - 第 3 次检查网络...
+2025-12-11 14:19:48 - 检测到硬件级异常 (介质断开，多次重置失败)，连续失败 3/3
+2025-12-11 14:19:48 - 硬件状态持续异常，准备重启计算机...
+2025-12-11 14:19:48 - 正在执行重启命令...
 ```
 
 ---
 
-## ??? 卸载服务
+## Uninstallation
 
-### 方法一：使用卸载脚本（推荐）
+### One-Click Uninstall (Recommended)
 
-**右键点击 `uninstall.bat`，选择「以管理员身份运行」**
+**Right-click `uninstall.bat` → Run as Administrator**
 
-会提示是否删除安装文件和日志。
+Prompts to optionally delete installation files and logs.
 
-### 方法二：手动卸载
+### Manual Uninstall
 
 ```powershell
-# 停止服务
+# Stop service
 sc stop NetWatchService
 
-# 删除服务
+# Delete service
 sc delete NetWatchService
 
-# 删除文件（可选）
+# Remove files (optional)
 Remove-Item -Path "C:\NetWatchService" -Recurse -Force
+Remove-Item -Path "%ProgramData%\NetWatchService" -Recurse -Force
 ```
 
 ---
 
-## ?? 高级配置
+## Troubleshooting
 
-### 修改检查参数
+### Service Won't Start
 
-编辑 `NetworkMonitorService.cs`：
+1. Verify Administrator permissions
+2. Check Event Viewer: `Win + R` → `eventvwr.msc` → Windows Logs → Application
+3. Review log file: `%ProgramData%\NetWatchService\log.txt`
 
-```csharp
-private int maxCheckCount = 10;        // 最多检查次数（默认 10 次 = 10 分钟）
-private int failureThreshold = 3;      // 连续失败阈值（默认 3 次）
-private Timer timer = new Timer(60000); // 检查间隔（默认 60000ms = 1 分钟）
-```
+### Service Stops Immediately
 
-### 修改日志路径
+Expected behavior when network is healthy and `AutoStopOnNetworkOk=true`. Check logs to confirm.
 
-```csharp
-private string logPath = @"C:\NetWatchService\log.txt";
-```
+### System Doesn't Restart
 
-### 修改 Ping 目标
+1. Ensure consecutive failures reach threshold (default: 3)
+2. Verify service has permissions to execute `shutdown` command
+3. Check for error messages in logs
+4. Test with `TestMode=true` to verify detection logic
 
-```csharp
-PingReply reply = ping.Send("8.8.8.8", 3000);      // Google DNS
-reply = ping.Send("114.114.114.114", 3000);        // 国内 DNS
-```
+### False Positives
 
-修改后重新运行 `install.bat` 部署。
+- Increase `FailureThreshold` to require more consecutive failures
+- Increase `AdapterResetRetries` to allow more recovery attempts
+- Review logs to identify root cause (hardware vs. transient)
 
 ---
 
-## ?? 故障排查
+## Important Notes
 
-### 服务无法启动
-
-1. 检查是否以管理员身份运行
-2. 查看事件查看器：`Win + R` → `eventvwr.msc` → Windows 日志 → 应用程序
-3. 检查日志文件：`C:\NetWatchService\log.txt`
-
-### 服务启动后立即停止
-
-可能是网络已经正常，这是预期行为。查看日志确认。
-
-### 网络正常但服务不停止
-
-1. 检查防火墙是否阻止 Ping
-2. 检查网络是否真的能访问外网
-3. 使用 `manage.bat` → 选项 8 手动测试网络
-
-### 服务没有重启电脑
-
-1. 确认连续失败达到 3 次
-2. 检查是否有权限执行 shutdown 命令
-3. 查看日志中的错误信息
+1. **Administrator Permissions Required**: Installation, configuration, and runtime all require admin rights
+2. **Auto-Start**: Service is configured to start automatically on system boot
+3. **Forced Restart**: System restart is forced (`shutdown /r /f`), unsaved work will be lost
+4. **Log Growth**: Log files grow indefinitely; consider periodic manual cleanup
+5. **Firewall/Security**: No network traffic is generated (uses local WMI queries only)
 
 ---
 
-## ?? 注意事项
+## FAQ
 
-1. **需要管理员权限**：服务安装、启动、重启电脑都需要管理员权限
-2. **自动启动**：服务设置为「自动」启动，系统启动时会自动运行
-3. **重启风险**：网络异常时会强制重启电脑，请确保无未保存数据
-4. **日志管理**：日志会一直累积，建议定期清空
-5. **防火墙**：确保允许 Ping 外网（ICMP 协议）
+**Q: When does the service start checking?**  
+A: Immediately upon service start, then at regular intervals.
 
----
+**Q: Will the service run forever?**  
+A: No, if network becomes healthy and `AutoStopOnNetworkOk=true`, service stops automatically.
 
-## ?? 常见问题
+**Q: How do I test without restarting?**  
+A: Set `TestMode=true` in configuration and monitor logs.
 
-**Q: 断电后多久开始检查？**  
-A: 系统启动后立即开始，第一次检查在服务启动时执行。
+**Q: Can I prevent restart and only reset adapters?**  
+A: Not currently supported. Consider modifying the source code to remove `RestartComputer()` call.
 
-**Q: 网络正常后服务会一直运行吗？**  
-A: 不会，网络正常后服务会自动停止，不占用资源。
-
-**Q: 如何测试服务是否工作？**  
-A: 使用 `manage.bat` 查看日志，或断开网线后启动服务观察行为。
-
-**Q: 可以改成不重启电脑，只重启网卡吗？**  
-A: 可以修改代码，将 `shutdown /r` 改为 `netsh interface set interface "网卡名称" disabled/enabled`。
+**Q: What happens during power outages?**  
+A: On reboot, adapters may temporarily report "media disconnected." Service will attempt reset and wait for confirmation before escalating.
 
 ---
 
-## ?? 开源协议
+## Technical Details
 
-本项目仅供学习和内部使用。
+### WMI Queries Used
+
+- `Win32_NetworkAdapter WHERE PhysicalAdapter = TRUE`
+- `Win32_NetworkAdapterConfiguration WHERE IPEnabled = TRUE`
+
+### Adapter Status Codes
+
+| Code | Meaning | Service Action |
+|------|---------|----------------|
+| 2 | Connected | Healthy |
+| 4 | Disconnected | Hardware fault (critical) |
+| 5 | Disconnecting | Hardware fault (critical) |
+| 6 | Disconnecting | Hardware fault (critical) |
+| 7 | Media Disconnected | Try reset, then critical if unrecoverable |
+
+### Requirements
+
+- Windows 7 / Server 2008 R2 or later
+- .NET Framework 4.8
+- Administrator privileges
 
 ---
 
-## 版本历史
+## Project Structure
 
-- **v1.0** - 初始版本，基础网络监控和重启功能
-- **v1.1** - 添加自动停止机制、防误判、多 DNS 检测
-- **v1.2** - 添加一键部署脚本和管理工具
+| File | Description |
+|------|-------------|
+| `NetworkMonitorService.cs` | Main service implementation |
+| `Program.cs` | Service entry point |
+| `install.bat` | One-click installation script |
+| `uninstall.bat` | One-click uninstall script |
+| `manage.bat` | Service management utility |
+| `settings.ini` | Configuration template |
 
 ---
 
-**开发者**: NetWatchService  
-**最后更新**: 2024
+## License
+
+This project is for learning and internal use.
+
+---
+
+## Version History
+
+- **v1.3** (2025-12) - Hardware-focused diagnostics, adapter reset flow, fixed media-disconnect escalation bug
+- **v1.2** - Added one-click scripts and management utility
+- **v1.1** - Auto-stop feature, multiple DNS targets
+- **v1.0** - Initial release (network monitoring + automatic restart)
+
+---
+
+**Maintainer**: NetWatchService  
+**Year**: 2024-2025
